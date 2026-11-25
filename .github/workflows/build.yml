@@ -20,6 +20,12 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
+      - name: Ensure .env.example exists
+        run: |
+          if [ ! -f .env.example ]; then
+            touch .env.example
+          fi
+
       - name: Setup Gradle Wrapper if missing
         run: |
           if [ ! -f ./gradlew ]; then
