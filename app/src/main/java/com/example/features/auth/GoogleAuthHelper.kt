@@ -48,10 +48,18 @@ object GoogleAuthHelper {
         onUnauthenticated: () -> Unit,
         scope: CoroutineScope
     ) {
-        if (Firebase.auth.currentUser != null) {
+        val hasCurrentUser = try {
+            Firebase.auth.currentUser != null
+        } catch (e: Exception) {
+            Log.w(TAG, "Firebase auth check failed during auto sign-in", e)
+            false
+        }
+
+        if (hasCurrentUser) {
             onAuthSuccess()
             return
         }
+
         val clientId = resolveWebClientId(context)
         if (clientId == null) {
             onUnauthenticated()
@@ -143,7 +151,11 @@ object GoogleAuthHelper {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to clear credential state: ${e.message}")
                 } finally {
-                    Firebase.auth.signOut()
+                    try {
+                        Firebase.auth.signOut()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Firebase signOut failed: ${e.message}")
+                    }
                     onSignOutComplete()
                 }
             }
