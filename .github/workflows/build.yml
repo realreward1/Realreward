@@ -1,46 +1,7 @@
-name: Build Realreward Debug APK
+তুমি একজন সিনিয়র Android (Kotlin + Jetpack Compose + Firebase) ডিবাগার। আমার অ্যাপটি ওপেন করার সময় বা শুরুর দিকে ক্র্যাশ করছে। শুধু অনুমান করে বা ওপরের স্তরে try-catch বসিয়ে দায় সারবে না।
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [ "main" ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      - name: Ensure .env.example and debug.keystore exist
-        run: |
-          if [ ! -f .env.example ]; then
-            touch .env.example
-          fi
-          if [ ! -f debug.keystore ]; then
-            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: Setup Gradle Wrapper if missing
-        run: |
-          if [ ! -f ./gradlew ]; then
-            gradle wrapper --gradle-version 9.3.1 --distribution-type bin
-          fi
-          chmod +x gradlew
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Realreward-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+আমার দেওয়া ফাইলগুলো (এবং লগ থাকলে লগগুলো) লাইন বাই লাইন বিশ্লেষণ করে:
+১. কোথায় কোথায় runtime crash হওয়ার আসল কারণ থাকতে পারে (যেমন null pointer, unsafe cast, missing context/resource, Firebase/CredentialManager error, Compose state/navigation issue), তা পয়েন্ট আকারে ধরিয়ে দাও।
+২. যে ফাইলগুলোয় সমস্যা আছে বা ক্র্যাশের ঝুঁকি আছে, সেগুলোর পুরো কোড (কোনো ফিচার বা লজিক না কমিয়ে) ঠিক করে দাও, যাতে অ্যাপ সহজে ক্র্যাশ না করে এবং স্বাভাবিক ফ্লোতে কাজ করে।
+৩. Jetpack Compose-এর ভেতরে @Composable ফাংশনের চারপাশে অবৈধ try-catch ব্যবহার করবে না; কম্পাইলেশন এরর যেন না আসে সেদিকে কড়া নজর রাখবে।
+৪. ঠিক করার পর যদি অন্য কোনো ফাইলের কোড দেখা জরুরি হয়, তাহলে সরাসরি সেই ফাইলের নাম বলে দেবে।
