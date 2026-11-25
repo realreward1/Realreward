@@ -74,10 +74,10 @@ fun RealRewardTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val activeColorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = activeColorScheme,
         typography = RealRewardTypography,
         shapes = RealRewardShapes,
         content = content
