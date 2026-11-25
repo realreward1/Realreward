@@ -1,5 +1,6 @@
 package com.example.features.auth
 
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -31,11 +32,14 @@ import com.example.R
 import com.example.core.notifications.AppNotificationHelper
 import com.example.data.repository.RealRewardFirestoreRepository
 import com.example.domain.model.AppLanguage
+import com.example.domain.model.FaqItem
 import com.example.ui.components.BrandLogoMark
 import com.example.ui.components.LanguageSwitchChip
 import com.example.ui.components.LivePlatformPill
 import com.example.ui.i18n.LocalStrings
 import com.example.ui.theme.*
+
+private const val TAG = "AuthLandingScreen"
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -48,10 +52,27 @@ fun AuthLandingScreen(
     val strings = LocalStrings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember { CredentialManager.create(context) }
+
+    val credentialManager: CredentialManager? = remember(context) {
+        try {
+            CredentialManager.create(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "CredentialManager creation failed", e)
+            null
+        }
+    }
+
     var isSigningIn by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
-    val faqs = remember { RealRewardFirestoreRepository.getDefaultFaqs() }
+
+    val faqs: List<FaqItem> = remember {
+        try {
+            RealRewardFirestoreRepository.getDefaultFaqs()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load default FAQs", e)
+            emptyList()
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -144,23 +165,34 @@ fun AuthLandingScreen(
                         Button(
                             onClick = {
                                 authError = null
+                                val manager = credentialManager
+                                if (manager == null) {
+                                    authError = "Sign-in service is unavailable on this device."
+                                    return@Button
+                                }
                                 isSigningIn = true
-                                GoogleAuthHelper.onGoogleSignInClicked(
-                                    context = context,
-                                    credentialManager = credentialManager,
-                                    onAuthSuccess = {
-                                        isSigningIn = false
-                                        onAuthSuccess()
-                                    },
-                                    onAuthError = { msg ->
-                                        isSigningIn = false
-                                        authError = msg
-                                    },
-                                    scope = scope,
-                                    onAuthCancelled = {
-                                        isSigningIn = false
-                                    }
-                                )
+                                try {
+                                    GoogleAuthHelper.onGoogleSignInClicked(
+                                        context = context,
+                                        credentialManager = manager,
+                                        onAuthSuccess = {
+                                            isSigningIn = false
+                                            onAuthSuccess()
+                                        },
+                                        onAuthError = { msg ->
+                                            isSigningIn = false
+                                            authError = msg
+                                        },
+                                        scope = scope,
+                                        onAuthCancelled = {
+                                            isSigningIn = false
+                                        }
+                                    )
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Google sign-in click failed", e)
+                                    isSigningIn = false
+                                    authError = e.localizedMessage ?: "Failed to start Google sign-in."
+                                }
                             },
                             enabled = !isSigningIn,
                             modifier = Modifier
@@ -308,45 +340,47 @@ fun AuthLandingScreen(
                 }
             }
 
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(strings.faqTitle, style = MaterialTheme.typography.titleLarge)
-                    faqs.forEachIndexed { idx, faq ->
-                        var expanded by remember { mutableStateOf(idx == 0) }
-                        OutlinedCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { expanded = !expanded },
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = faq.question.get(language),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Icon(
-                                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                        contentDescription = null
-                                    )
-                                }
-                                AnimatedVisibility(visible = expanded) {
-                                    Text(
-                                        text = faq.answer.get(language),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(top = 8.dp)
-                                    )
+            if (faqs.isNotEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(strings.faqTitle, style = MaterialTheme.typography.titleLarge)
+                        faqs.forEachIndexed { idx, faq ->
+                            var expanded by remember { mutableStateOf(idx == 0) }
+                            OutlinedCard(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { expanded = !expanded },
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = faq.question.get(language),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(
+                                            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = null
+                                        )
+                                    }
+                                    AnimatedVisibility(visible = expanded) {
+                                        Text(
+                                            text = faq.answer.get(language),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -384,12 +418,16 @@ fun AuthLandingScreen(
                             }
                             TextButton(
                                 onClick = {
-                                    AppNotificationHelper.shareAppDownload(
-                                        context = context,
-                                        url = null,
-                                        brandName = strings.brandName,
-                                        latestVersion = BuildConfig.VERSION_NAME
-                                    )
+                                    try {
+                                        AppNotificationHelper.shareAppDownload(
+                                            context = context,
+                                            url = null,
+                                            brandName = strings.brandName,
+                                            latestVersion = BuildConfig.VERSION_NAME
+                                        )
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "shareAppDownload failed", e)
+                                    }
                                 }
                             ) {
                                 Text(strings.shareAppButton, color = GoldSoft)
