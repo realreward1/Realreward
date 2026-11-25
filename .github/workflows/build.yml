@@ -1,7 +1,6 @@
-তুমি একজন সিনিয়র Android (Kotlin + Jetpack Compose + Firebase) ডিবাগার। আমার অ্যাপটি ওপেন করার সময় বা শুরুর দিকে ক্র্যাশ করছে। শুধু অনুমান করে বা ওপরের স্তরে try-catch বসিয়ে দায় সারবে না।
-
-আমার দেওয়া ফাইলগুলো (এবং লগ থাকলে লগগুলো) লাইন বাই লাইন বিশ্লেষণ করে:
-১. কোথায় কোথায় runtime crash হওয়ার আসল কারণ থাকতে পারে (যেমন null pointer, unsafe cast, missing context/resource, Firebase/CredentialManager error, Compose state/navigation issue), তা পয়েন্ট আকারে ধরিয়ে দাও।
-২. যে ফাইলগুলোয় সমস্যা আছে বা ক্র্যাশের ঝুঁকি আছে, সেগুলোর পুরো কোড (কোনো ফিচার বা লজিক না কমিয়ে) ঠিক করে দাও, যাতে অ্যাপ সহজে ক্র্যাশ না করে এবং স্বাভাবিক ফ্লোতে কাজ করে।
-৩. Jetpack Compose-এর ভেতরে @Composable ফাংশনের চারপাশে অবৈধ try-catch ব্যবহার করবে না; কম্পাইলেশন এরর যেন না আসে সেদিকে কড়া নজর রাখবে।
-৪. ঠিক করার পর যদি অন্য কোনো ফাইলের কোড দেখা জরুরি হয়, তাহলে সরাসরি সেই ফাইলের নাম বলে দেবে।
+      - name: Scan for common crash & build issues
+        if: always()
+        run: |
+          echo "=== BUILD & CODE SCAN REPORT ===" > crash-report.txt
+          grep -rnE "!!|ILLEGAL_TRY_CATCH_AROUND_COMPOSABLE|try\s*\{" app/src/main/java || true >> crash-report.txt
+          cat crash-report.txt || true
