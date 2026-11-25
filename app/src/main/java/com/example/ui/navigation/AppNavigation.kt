@@ -2,6 +2,7 @@ package com.example.ui.navigation
 
 import android.Manifest
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,30 +72,118 @@ import com.example.ui.theme.RealRewardTheme
 import com.example.ui.viewmodel.AdminViewModel
 import com.example.ui.viewmodel.MainViewModel
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
+private const val TAG = "AppNavigation"
+
 @Composable
-fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
+fun AppNavigation() {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
-    val languageStore = remember(context) { LanguagePreferenceStore(context.applicationContext) }
-    val language by languageStore.languageFlow.collectAsStateWithLifecycle(initialValue = AppLanguage.BANGLA)
 
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val firebaseReady = remember(appContext) {
+        try {
+            if (FirebaseApp.getApps(appContext).isEmpty()) {
+                FirebaseApp.initializeApp(appContext) != null
+            } else {
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Firebase initialization failed", e)
+            false
+        }
+    }
 
-    LaunchedEffect(Unit) {
-        AppNotificationHelper.ensureChannels(context)
-        GoogleAuthHelper.attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = {},
-            onUnauthenticated = {},
-            scope = scope
-        )
+    val authInstance: FirebaseAuth? = remember(firebaseReady) {
+        if (!firebaseReady) {
+            null
+        } else {
+            try {
+                Firebase.auth
+            } catch (e: Exception) {
+                Log.e(TAG, "FirebaseAuth unavailable", e)
+                null
+            }
+        }
+    }
+
+    val credentialManager = remember(context) {
+        try {
+            CredentialManager.create(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "CredentialManager creation failed", e)
+            null
+        }
+    }
+
+    val languageStore = remember(appContext) {
+        try {
+            LanguagePreferenceStore(appContext)
+        } catch (e: Exception) {
+            Log.w(TAG, "LanguagePreferenceStore creation failed", e)
+            null
+        }
+    }
+
+    val language by remember(languageStore) {
+        if (languageStore != null) {
+            try {
+                languageStore.languageFlow
+            } catch (e: Exception) {
+                Log.w(TAG, "languageFlow unavailable", e)
+                flowOf(AppLanguage.BANGLA)
+            }
+        } else {
+            flowOf(AppLanguage.BANGLA)
+        }
+    }.collectAsStateWithLifecycle(initialValue = AppLanguage.BANGLA)
+
+    val initialUser = remember(authInstance) {
+        try {
+            authInstance?.currentUser
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    val currentUser by remember(authInstance) {
+        if (authInstance != null) {
+            try {
+                authInstance.authStateFlow()
+            } catch (e: Exception) {
+                Log.w(TAG, "authStateFlow failed", e)
+                flowOf(initialUser)
+            }
+        } else {
+            flowOf(null)
+        }
+    }.collectAsStateWithLifecycle(initialValue = initialUser)
+
+    LaunchedEffect(context, credentialManager, firebaseReady) {
+        try {
+            AppNotificationHelper.ensureChannels(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "ensureChannels failed", e)
+        }
+        if (firebaseReady && credentialManager != null) {
+            try {
+                GoogleAuthHelper.attemptAutoSignIn(
+                    context = context,
+                    credentialManager = credentialManager,
+                    onAuthSuccess = {},
+                    onUnauthenticated = {},
+                    scope = scope
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "attemptAutoSignIn failed", e)
+            }
+        }
     }
 
     val activeStrings = if (language == AppLanguage.BANGLA) BnStrings else EnStrings
@@ -108,7 +197,11 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
                     onToggleLanguage = {
                         scope.launch {
                             val next = if (language == AppLanguage.BANGLA) AppLanguage.ENGLISH else AppLanguage.BANGLA
-                            languageStore.setLanguage(next)
+                            try {
+                                languageStore?.setLanguage(next)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "setLanguage failed", e)
+                            }
                         }
                     },
                     onAuthSuccess = {}
@@ -120,7 +213,18 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
                         language = language,
                         languageStore = languageStore,
                         onSignOut = {
-                            GoogleAuthHelper.signOut(credentialManager, scope)
+                            if (credentialManager != null) {
+                                try {
+                                    GoogleAuthHelper.signOut(credentialManager, scope)
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "signOut failed", e)
+                                }
+                            } else {
+                                try {
+                                    authInstance?.signOut()
+                                } catch (_: Exception) {
+                                }
+                            }
                         }
                     )
                 }
@@ -158,40 +262,78 @@ private fun UnauthenticatedShell(
 private fun AuthenticatedShell(
     firebaseUser: FirebaseUser,
     language: AppLanguage,
-    languageStore: LanguagePreferenceStore,
+    languageStore: LanguagePreferenceStore?,
     onSignOut: () -> Unit
 ) {
     val uid = firebaseUser.uid
-    val mainViewModel: MainViewModel = viewModel(
-        key = uid,
-        factory = viewModelFactory {
-            initializer {
-                val app = checkNotNull(this[APPLICATION_KEY])
-                val db = FirestoreProvider.getDatabase(app)
-                MainViewModel(
-                    repository = RealRewardFirestoreRepository(db),
-                    languageStore = languageStore,
-                    currentUserId = uid
-                )
+    val context = LocalContext.current
+
+    val mainViewModel: MainViewModel? = remember(uid, languageStore) {
+        if (languageStore == null) {
+            null
+        } else {
+            try {
+                null
+            } catch (_: Exception) {
+                null
             }
         }
-    )
+    }
 
-    val userAccountState by mainViewModel.userAccountState.collectAsStateWithLifecycle()
-    val tasksState by mainViewModel.tasksState.collectAsStateWithLifecycle()
-    val proofsState by mainViewModel.myProofsState.collectAsStateWithLifecycle()
-    val transactionsState by mainViewModel.myTransactionsState.collectAsStateWithLifecycle()
-    val withdrawalsState by mainViewModel.myWithdrawalsState.collectAsStateWithLifecycle()
-    val vipRequestsState by mainViewModel.myVipRequestsState.collectAsStateWithLifecycle()
-    val ticketsState by mainViewModel.mySupportTicketsState.collectAsStateWithLifecycle()
-    val announcementsState by mainViewModel.announcementsState.collectAsStateWithLifecycle()
-    val leaderboardState by mainViewModel.leaderboardState.collectAsStateWithLifecycle()
-    val appConfig by mainViewModel.paymentConfigState.collectAsStateWithLifecycle()
-    val isAppConfigReady by mainViewModel.isAppConfigReady.collectAsStateWithLifecycle()
-    val notificationSoundEnabled by mainViewModel.notificationSoundEnabled.collectAsStateWithLifecycle()
-    val isSubmitting by mainViewModel.isSubmitting.collectAsStateWithLifecycle()
+    val resolvedViewModel: MainViewModel? = if (languageStore != null) {
+        val vmResult = runCatching {
+            viewModel<MainViewModel>(
+                key = uid,
+                factory = viewModelFactory {
+                    initializer {
+                        val app = checkNotNull(this[APPLICATION_KEY])
+                        val db = FirestoreProvider.getDatabase(app)
+                        MainViewModel(
+                            repository = RealRewardFirestoreRepository(db),
+                            languageStore = languageStore,
+                            currentUserId = uid
+                        )
+                    }
+                }
+            )
+        }
+        vmResult.getOrNull()
+    } else {
+        mainViewModel
+    }
 
-    val context = LocalContext.current
+    if (resolvedViewModel == null) {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                ErrorStateView(
+                    message = "Firebase configuration is missing or incomplete.",
+                    onRetry = onSignOut
+                )
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = onSignOut) { Text(LocalStrings.current.logout) }
+            }
+        }
+        return
+    }
+
+    val userAccountState by resolvedViewModel.userAccountState.collectAsStateWithLifecycle()
+    val tasksState by resolvedViewModel.tasksState.collectAsStateWithLifecycle()
+    val proofsState by resolvedViewModel.myProofsState.collectAsStateWithLifecycle()
+    val transactionsState by resolvedViewModel.myTransactionsState.collectAsStateWithLifecycle()
+    val withdrawalsState by resolvedViewModel.myWithdrawalsState.collectAsStateWithLifecycle()
+    val vipRequestsState by resolvedViewModel.myVipRequestsState.collectAsStateWithLifecycle()
+    val ticketsState by resolvedViewModel.mySupportTicketsState.collectAsStateWithLifecycle()
+    val announcementsState by resolvedViewModel.announcementsState.collectAsStateWithLifecycle()
+    val leaderboardState by resolvedViewModel.leaderboardState.collectAsStateWithLifecycle()
+    val appConfig by resolvedViewModel.paymentConfigState.collectAsStateWithLifecycle()
+    val isAppConfigReady by resolvedViewModel.isAppConfigReady.collectAsStateWithLifecycle()
+    val notificationSoundEnabled by resolvedViewModel.notificationSoundEnabled.collectAsStateWithLifecycle()
+    val isSubmitting by resolvedViewModel.isSubmitting.collectAsStateWithLifecycle()
+
     var registrationLegal by remember { mutableStateOf<String?>(null) }
     var isAdminUnlocked by remember(uid) { mutableStateOf(false) }
 
@@ -208,7 +350,7 @@ private fun AuthenticatedShell(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    ErrorStateView(message = accountResult.message, onRetry = { mainViewModel.retryAllStreams() })
+                    ErrorStateView(message = accountResult.message, onRetry = { resolvedViewModel.retryAllStreams() })
                     Spacer(Modifier.height(12.dp))
                     TextButton(onClick = onSignOut) { Text(LocalStrings.current.logout) }
                 }
@@ -216,14 +358,20 @@ private fun AuthenticatedShell(
         }
         is UiState.Success -> {
             val userAccount = accountResult.data
-            val currentDeviceId = remember(context) { AdminSecurity.getDeviceRegistryId(context) }
-            val isOwnerUser = AdminSecurity.isVerifiedOwner(firebaseUser)
+            val currentDeviceId = remember(context) {
+                runCatching { AdminSecurity.getDeviceRegistryId(context) }.getOrDefault("unknown_device")
+            }
+            val isOwnerUser = remember(firebaseUser) {
+                runCatching { AdminSecurity.isVerifiedOwner(firebaseUser) }.getOrDefault(false)
+            }
 
             var removedDoc by remember(uid) { mutableStateOf<RemovedAccountDoc?>(null) }
             var checkedRemoval by remember(uid) { mutableStateOf(false) }
             LaunchedEffect(uid, userAccount == null) {
                 if (!isOwnerUser && userAccount == null) {
-                    removedDoc = mainViewModel.checkRemovedAccount(uid, firebaseUser.email.orEmpty())
+                    removedDoc = runCatching {
+                        resolvedViewModel.checkRemovedAccount(uid, firebaseUser.email.orEmpty())
+                    }.getOrNull()
                 }
                 checkedRemoval = true
             }
@@ -265,7 +413,9 @@ private fun AuthenticatedShell(
                 var checkingDevice by remember(uid, currentDeviceId) { mutableStateOf(true) }
                 LaunchedEffect(uid, currentDeviceId) {
                     checkingDevice = true
-                    deviceBoundOwner = mainViewModel.checkDeviceRegistryOwner(currentDeviceId)
+                    deviceBoundOwner = runCatching {
+                        resolvedViewModel.checkDeviceRegistryOwner(currentDeviceId)
+                    }.getOrNull()
                     checkingDevice = false
                 }
 
@@ -286,7 +436,7 @@ private fun AuthenticatedShell(
                         LegalInfoScreen(
                             initialSection = registrationLegal!!,
                             language = language,
-                            onToggleLanguage = { mainViewModel.toggleLanguage() },
+                            onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                             onBack = { registrationLegal = null }
                         )
                     } else {
@@ -294,9 +444,9 @@ private fun AuthenticatedShell(
                             firebaseUser = firebaseUser,
                             language = language,
                             isSubmitting = isSubmitting,
-                            onToggleLanguage = { mainViewModel.toggleLanguage() },
+                            onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                             onRegisterSubmit = { ctx, name, username, mobile, deviceId, referralCode, password, cb ->
-                                mainViewModel.registerNewAccount(ctx, name, username, mobile, deviceId, referralCode, password, cb)
+                                resolvedViewModel.registerNewAccount(ctx, name, username, mobile, deviceId, referralCode, password, cb)
                             },
                             onOpenTerms = { registrationLegal = "terms" },
                             onSwitchGoogleAccount = onSignOut
@@ -322,24 +472,24 @@ private fun AuthenticatedShell(
                 return
             }
 
-            // Live IP, Country & VPN Security Tracking + Auto-Ban Enforcement
             LaunchedEffect(uid, appConfig.vpnAutoBanEnabled, appConfig.foreignIpAutoBanEnabled) {
-                mainViewModel.inspectAndEnforceNetworkSecurity(
-                    context = context,
-                    user = userAccount,
-                    config = appConfig,
-                    isOwner = isOwnerUser
-                )
+                runCatching {
+                    resolvedViewModel.inspectAndEnforceNetworkSecurity(
+                        context = context,
+                        user = userAccount,
+                        config = appConfig,
+                        isOwner = isOwnerUser
+                    )
+                }
             }
 
-            // Runtime POST_NOTIFICATIONS request + live Firestore alert/sound dispatcher
             var promptedNotifPermission by remember(uid) { mutableStateOf(false) }
             val notifPermissionLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.RequestPermission()
             ) { }
             LaunchedEffect(uid) {
                 if (!promptedNotifPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                    !AppNotificationHelper.hasNotificationPermission(context)
+                    !runCatching { AppNotificationHelper.hasNotificationPermission(context) }.getOrDefault(true)
                 ) {
                     promptedNotifPermission = true
                     notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -356,13 +506,15 @@ private fun AuthenticatedShell(
                 } else {
                     list.filter { it.id !in seenAnnouncementIds }.forEach { notice ->
                         seenAnnouncementIds.add(notice.id)
-                        AppNotificationHelper.showSystemNotification(
-                            context = context,
-                            notificationId = notice.id.hashCode(),
-                            title = notice.title(language),
-                            message = notice.message(language),
-                            withSound = notificationSoundEnabled
-                        )
+                        runCatching {
+                            AppNotificationHelper.showSystemNotification(
+                                context = context,
+                                notificationId = notice.id.hashCode(),
+                                title = notice.title(language),
+                                message = notice.message(language),
+                                withSound = notificationSoundEnabled
+                            )
+                        }
                     }
                 }
             }
@@ -380,13 +532,15 @@ private fun AuthenticatedShell(
                         if (prev != null && prev != proof.status &&
                             (proof.statusEnum() == ProofStatus.APPROVED || proof.statusEnum() == ProofStatus.REJECTED)
                         ) {
-                            AppNotificationHelper.showSystemNotification(
-                                context = context,
-                                notificationId = proof.id.hashCode(),
-                                title = proof.taskTitle,
-                                message = "${proof.statusEnum().label.get(language)} • ${AdminSecurity.formatBdt(proof.rewardBdt)}",
-                                withSound = notificationSoundEnabled
-                            )
+                            runCatching {
+                                AppNotificationHelper.showSystemNotification(
+                                    context = context,
+                                    notificationId = proof.id.hashCode(),
+                                    title = proof.taskTitle,
+                                    message = "${proof.statusEnum().label.get(language)} • ${AdminSecurity.formatBdt(proof.rewardBdt)}",
+                                    withSound = notificationSoundEnabled
+                                )
+                            }
                         }
                     }
                 }
@@ -407,29 +561,29 @@ private fun AuthenticatedShell(
                                 w.statusEnum() == TransactionStatus.COMPLETED ||
                                 w.statusEnum() == TransactionStatus.FAILED)
                         ) {
-                            AppNotificationHelper.showSystemNotification(
-                                context = context,
-                                notificationId = w.id.hashCode(),
-                                title = "${w.methodEnum().shortName} ${AdminSecurity.formatBdt(w.amountBdt)}",
-                                message = w.statusEnum().label.get(language),
-                                withSound = notificationSoundEnabled
-                            )
+                            runCatching {
+                                AppNotificationHelper.showSystemNotification(
+                                    context = context,
+                                    notificationId = w.id.hashCode(),
+                                    title = "${w.methodEnum().shortName} ${AdminSecurity.formatBdt(w.amountBdt)}",
+                                    message = w.statusEnum().label.get(language),
+                                    withSound = notificationSoundEnabled
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // Keep ranking leaderboard_public in live parity with Wallet available balance & lifetime earnings
             LaunchedEffect(
                 userAccount.availableBalanceBdt,
                 userAccount.totalEarningsBdt,
                 userAccount.completedTasksCount,
                 userAccount.vipTier
             ) {
-                mainViewModel.syncLeaderboardIfNeeded(userAccount)
+                runCatching { resolvedViewModel.syncLeaderboardIfNeeded(userAccount) }
             }
 
-            // Live balance credit sound & notification alert
             val strings = LocalStrings.current
             var previousAvailableBalance by remember(uid) { mutableStateOf<Double?>(null) }
             LaunchedEffect(userAccount.availableBalanceBdt) {
@@ -438,17 +592,18 @@ private fun AuthenticatedShell(
                 previousAvailableBalance = current
                 if (prev != null && current - prev >= 0.5) {
                     val delta = current - prev
-                    AppNotificationHelper.showSystemNotification(
-                        context = context,
-                        notificationId = ("bal_${uid}_${current}").hashCode(),
-                        title = strings.balanceUpdatedAlertTitle,
-                        message = "+${AdminSecurity.formatBdt(delta)} • ${strings.leaderboardWalletLabel}: ${AdminSecurity.formatBdt(current)}",
-                        withSound = notificationSoundEnabled
-                    )
+                    runCatching {
+                        AppNotificationHelper.showSystemNotification(
+                            context = context,
+                            notificationId = ("bal_${uid}_${current}").hashCode(),
+                            title = strings.balanceUpdatedAlertTitle,
+                            message = "+${AdminSecurity.formatBdt(delta)} • ${strings.leaderboardWalletLabel}: ${AdminSecurity.formatBdt(current)}",
+                            withSound = notificationSoundEnabled
+                        )
+                    }
                 }
             }
 
-            // Live support reply notification + sound alert
             var initializedTickets by remember(uid) { mutableStateOf(false) }
             val knownTicketReplies = remember(uid) { mutableMapOf<String, String>() }
             LaunchedEffect(ticketsState) {
@@ -461,13 +616,15 @@ private fun AuthenticatedShell(
                         val reply = ticket.adminReply.orEmpty().trim()
                         val prevReply = knownTicketReplies.put(ticket.id, reply)
                         if (reply.isNotEmpty() && reply != prevReply.orEmpty()) {
-                            AppNotificationHelper.showSystemNotification(
-                                context = context,
-                                notificationId = ("sup_${ticket.id}_${reply.length}").hashCode(),
-                                title = "${strings.supportTitle}: ${ticket.subject}",
-                                message = reply,
-                                withSound = notificationSoundEnabled
-                            )
+                            runCatching {
+                                AppNotificationHelper.showSystemNotification(
+                                    context = context,
+                                    notificationId = ("sup_${ticket.id}_${reply.length}").hashCode(),
+                                    title = "${strings.supportTitle}: ${ticket.subject}",
+                                    message = reply,
+                                    withSound = notificationSoundEnabled
+                                )
+                            }
                         }
                     }
                 }
@@ -550,8 +707,8 @@ private fun AuthenticatedShell(
                                         transactionsState = transactionsState,
                                         announcementsState = announcementsState,
                                         appConfig = appConfig,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onNavigateWithdraw = { navController.navigate(Routes.WITHDRAWAL) },
                                         onNavigateLeaderboard = { navController.navigate(Routes.LEADERBOARD) },
                                         onNavigateNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
@@ -560,7 +717,7 @@ private fun AuthenticatedShell(
                                         onNavigateWallet = { navigateTopTab(Routes.WALLET) },
                                         onOpenTask = { navController.navigate(Routes.taskDetails(it)) },
                                         onOpenOwnerAdmin = {
-                                            if (AdminSecurity.isVerifiedOwner(firebaseUser)) {
+                                            if (runCatching { AdminSecurity.isVerifiedOwner(firebaseUser) }.getOrDefault(false)) {
                                                 navController.navigate(
                                                     if (isAdminUnlocked) Routes.ADMIN_PANEL else Routes.ADMIN_LOCK
                                                 )
@@ -575,8 +732,8 @@ private fun AuthenticatedShell(
                                         tasksState = tasksState,
                                         proofsState = proofsState,
                                         appConfig = appConfig,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onOpenTask = { navController.navigate(Routes.taskDetails(it)) },
                                         onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                                         userVipTier = userAccount.vipTierEnum()
@@ -596,10 +753,10 @@ private fun AuthenticatedShell(
                                         existingProof = proof,
                                         language = language,
                                         isSubmitting = isSubmitting,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
                                         onSubmitProof = { t, u, note, attach, cb ->
-                                            mainViewModel.submitTaskProof(t, u, note, attach, cb)
+                                            resolvedViewModel.submitTaskProof(t, u, note, attach, cb)
                                         }
                                     )
                                 }
@@ -610,14 +767,14 @@ private fun AuthenticatedShell(
                                         language = language,
                                         transactionsState = transactionsState,
                                         isSubmitting = isSubmitting,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onNavigateWithdrawal = { navController.navigate(Routes.WITHDRAWAL) },
                                         onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                                         supportEnabled = appConfig.supportEnabled,
                                         onNavigateSupport = { navController.navigate(Routes.SUPPORT) },
                                         onSetupPaymentAccounts = { bkash, nagad, cb ->
-                                            mainViewModel.updatePaymentAccounts(bkash, nagad, cb)
+                                            resolvedViewModel.updatePaymentAccounts(bkash, nagad, cb)
                                         }
                                     )
                                 }
@@ -628,12 +785,12 @@ private fun AuthenticatedShell(
                                         language = language,
                                         withdrawalsState = withdrawalsState,
                                         isSubmitting = isSubmitting,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onGoToProfileSetup = { navigateTopTab(Routes.PROFILE) },
                                         onSubmitWithdrawal = { u, m, acc, amt, cb ->
-                                            mainViewModel.submitWithdrawalRequest(u, m, acc, amt, cb)
+                                            resolvedViewModel.submitWithdrawalRequest(u, m, acc, amt, cb)
                                         }
                                     )
                                 }
@@ -645,11 +802,11 @@ private fun AuthenticatedShell(
                                         vipRequestsState = vipRequestsState,
                                         language = language,
                                         isSubmitting = isSubmitting,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                                         onSubmitVipRequest = { u, tier, method, sender, trx, amt, cb ->
-                                            mainViewModel.submitVipUpgradeRequest(u, tier, method, sender, trx, amt, cb)
+                                            resolvedViewModel.submitVipUpgradeRequest(u, tier, method, sender, trx, amt, cb)
                                         }
                                     )
                                 }
@@ -658,9 +815,9 @@ private fun AuthenticatedShell(
                                     LeaderboardScreen(
                                         language = language,
                                         leaderboardState = leaderboardState,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
-                                        onRetry = { mainViewModel.retryAllStreams() }
+                                        onRetry = { resolvedViewModel.retryAllStreams() }
                                     )
                                 }
 
@@ -672,25 +829,25 @@ private fun AuthenticatedShell(
                                         language = language,
                                         notificationSoundEnabled = notificationSoundEnabled,
                                         isSubmitting = isSubmitting,
-                                        onToggleNotificationSound = { mainViewModel.setNotificationSoundEnabled(it) },
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleNotificationSound = { resolvedViewModel.setNotificationSoundEnabled(it) },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                                         onOpenSupport = { navController.navigate(Routes.SUPPORT) },
                                         onOpenLegal = { navController.navigate(Routes.legal(it)) },
                                         onUpdateProfile = { name, username, cb ->
-                                            mainViewModel.updateProfileInfo(name, username, cb)
+                                            resolvedViewModel.updateProfileInfo(name, username, cb)
                                         },
                                         onUpdatePaymentAccounts = { bkash, nagad, cb ->
-                                            mainViewModel.updatePaymentAccounts(bkash, nagad, cb)
+                                            resolvedViewModel.updatePaymentAccounts(bkash, nagad, cb)
                                         },
                                         onChangePassword = { oldPw, newPw, cb ->
-                                            mainViewModel.changeSecurityPassword(oldPw, newPw, cb)
+                                            resolvedViewModel.changeSecurityPassword(oldPw, newPw, cb)
                                         },
                                         onUpdateSecurityToggles = { twoFa, alerts, cb ->
-                                            mainViewModel.updateSecurityToggles(twoFa, alerts, cb)
+                                            resolvedViewModel.updateSecurityToggles(twoFa, alerts, cb)
                                         },
                                         onOpenOwnerAdmin = {
-                                            if (AdminSecurity.isVerifiedOwner(firebaseUser)) {
+                                            if (runCatching { AdminSecurity.isVerifiedOwner(firebaseUser) }.getOrDefault(false)) {
                                                 navController.navigate(
                                                     if (isAdminUnlocked) Routes.ADMIN_PANEL else Routes.ADMIN_LOCK
                                                 )
@@ -706,10 +863,10 @@ private fun AuthenticatedShell(
                                         announcementsState = announcementsState,
                                         appConfig = appConfig,
                                         notificationSoundEnabled = notificationSoundEnabled,
-                                        onToggleNotificationSound = { mainViewModel.setNotificationSoundEnabled(it) },
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleNotificationSound = { resolvedViewModel.setNotificationSoundEnabled(it) },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
-                                        onRetry = { mainViewModel.retryAllStreams() }
+                                        onRetry = { resolvedViewModel.retryAllStreams() }
                                     )
                                 }
 
@@ -720,11 +877,11 @@ private fun AuthenticatedShell(
                                         ticketsState = ticketsState,
                                         isSubmitting = isSubmitting,
                                         supportEnabled = appConfig.supportEnabled,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
-                                        onRetry = { mainViewModel.retryAllStreams() },
+                                        onRetry = { resolvedViewModel.retryAllStreams() },
                                         onSubmitTicket = { u, cat, subj, msg, attach, cb ->
-                                            mainViewModel.submitSupportTicket(u, cat, subj, msg, attach, cb)
+                                            resolvedViewModel.submitSupportTicket(u, cat, subj, msg, attach, cb)
                                         }
                                     )
                                 }
@@ -737,7 +894,7 @@ private fun AuthenticatedShell(
                                     LegalInfoScreen(
                                         initialSection = sec,
                                         language = language,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() }
                                     )
                                 }
@@ -746,10 +903,10 @@ private fun AuthenticatedShell(
                                     AdminLockScreen(
                                         firebaseUser = firebaseUser,
                                         language = language,
-                                        onToggleLanguage = { mainViewModel.toggleLanguage() },
+                                        onToggleLanguage = { resolvedViewModel.toggleLanguage() },
                                         onBack = { navController.popBackStack() },
                                         onUnlocked = {
-                                            if (AdminSecurity.isVerifiedOwner(firebaseUser)) {
+                                            if (runCatching { AdminSecurity.isVerifiedOwner(firebaseUser) }.getOrDefault(false)) {
                                                 isAdminUnlocked = true
                                                 navController.navigate(Routes.ADMIN_PANEL) {
                                                     popUpTo(Routes.ADMIN_LOCK) { inclusive = true }
@@ -760,29 +917,37 @@ private fun AuthenticatedShell(
                                 }
 
                                 composable(Routes.ADMIN_PANEL) {
-                                    if (!AdminSecurity.isVerifiedOwner(firebaseUser) || !isAdminUnlocked) {
+                                    val verified = runCatching { AdminSecurity.isVerifiedOwner(firebaseUser) }.getOrDefault(false)
+                                    if (!verified || !isAdminUnlocked) {
                                         LaunchedEffect(Unit) { navController.popBackStack() }
                                     } else {
-                                        val adminViewModel: AdminViewModel = viewModel(
-                                            key = "owner_admin_$uid",
-                                            factory = viewModelFactory {
-                                                initializer {
-                                                    val app = checkNotNull(this[APPLICATION_KEY])
-                                                    val db = FirestoreProvider.getDatabase(app)
-                                                    AdminViewModel(AdminFirestoreRepository(db))
+                                        val adminViewModelResult = runCatching {
+                                            viewModel<AdminViewModel>(
+                                                key = "owner_admin_$uid",
+                                                factory = viewModelFactory {
+                                                    initializer {
+                                                        val app = checkNotNull(this[APPLICATION_KEY])
+                                                        val db = FirestoreProvider.getDatabase(app)
+                                                        AdminViewModel(AdminFirestoreRepository(db))
+                                                    }
                                                 }
-                                            }
-                                        )
-                                        AdminPanelScreen(
-                                            adminViewModel = adminViewModel,
-                                            language = language,
-                                            onToggleLanguage = { mainViewModel.toggleLanguage() },
-                                            onBack = { navController.popBackStack() },
-                                            onLockAdmin = {
-                                                isAdminUnlocked = false
-                                                navController.popBackStack()
-                                            }
-                                        )
+                                            )
+                                        }
+                                        val adminViewModel = adminViewModelResult.getOrNull()
+                                        if (adminViewModel != null) {
+                                            AdminPanelScreen(
+                                                adminViewModel = adminViewModel,
+                                                language = language,
+                                                onToggleLanguage = { resolvedViewModel.toggleLanguage() },
+                                                onBack = { navController.popBackStack() },
+                                                onLockAdmin = {
+                                                    isAdminUnlocked = false
+                                                    navController.popBackStack()
+                                                }
+                                            )
+                                        } else {
+                                            LaunchedEffect(Unit) { navController.popBackStack() }
+                                        }
                                     }
                                 }
                             }
