@@ -1,0 +1,6 @@
+{
+  "name": "Real Reward",
+  "description": "Premium Bangladeshi online microtask and rewards marketplace frontend (WORK • EARN • REWARD) with Bangla and English support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

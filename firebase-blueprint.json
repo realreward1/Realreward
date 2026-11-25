@@ -1,0 +1,346 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Registered Real Reward user profile, wallet summary, device lock, referral stats, and security status",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "accountId": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "username": { "type": "string" },
+        "mobileNumber": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "bkashPersonal": { "type": "string" },
+        "nagadPersonal": { "type": "string" },
+        "paymentAccountsLocked": { "type": "boolean" },
+        "walletChangeApprovedOnce": { "type": "boolean" },
+        "walletResetCount": { "type": "integer" },
+        "securityPasswordHash": { "type": "string" },
+        "vipTier": { "type": "string", "enum": ["REGULAR", "BRONZE", "SILVER", "GOLD", "DIAMOND"] },
+        "banned": { "type": "boolean" },
+        "permanentlyBanned": { "type": "boolean" },
+        "twoFactorEnabled": { "type": "boolean" },
+        "loginAlertsEnabled": { "type": "boolean" },
+        "registrationBonusClaimed": { "type": "boolean" },
+        "availableBalanceBdt": { "type": "number" },
+        "pendingBalanceBdt": { "type": "number" },
+        "totalEarningsBdt": { "type": "number" },
+        "totalWithdrawalsBdt": { "type": "number" },
+        "dailyEarningsBdt": { "type": "number" },
+        "completedTasksCount": { "type": "integer" },
+        "lastIpAddress": { "type": "string" },
+        "lastCountryCode": { "type": "string" },
+        "lastLocation": { "type": "string" },
+        "vpnDetected": { "type": "boolean" },
+        "banReason": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "referredByCode": { "type": "string" },
+        "referredByUid": { "type": "string" },
+        "referralCount": { "type": "integer" },
+        "referralEarningsBdt": { "type": "number" },
+        "referralScamCount": { "type": "integer" },
+        "lastCompletedTaskId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Client sends FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Client sends FieldValue.serverTimestamp()" }
+      },
+      "required": [
+        "userId", "accountId", "email", "fullName", "username", "mobileNumber", "deviceId",
+        "vipTier", "banned", "registrationBonusClaimed", "availableBalanceBdt",
+        "pendingBalanceBdt", "totalEarningsBdt", "totalWithdrawalsBdt", "completedTasksCount",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "LeaderboardPublic": {
+      "title": "LeaderboardPublic",
+      "description": "PII-free public ranking record for leaderboard",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "vipTier": { "type": "string" },
+        "tasksCompleted": { "type": "integer" },
+        "earningsBdt": { "type": "number" },
+        "availableBalanceBdt": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "username", "vipTier", "tasksCompleted", "earningsBdt", "updatedAt"]
+    },
+    "UniqueRegistry": {
+      "title": "UniqueRegistry",
+      "description": "Single-account enforcement registry for mobile numbers and device IDs",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "createdAt"]
+    },
+    "ReferralCodeDoc": {
+      "title": "ReferralCodeDoc",
+      "description": "Referral code lookup mapping to owner UID, deviceId, and last IP",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "lastIpAddress": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "userId", "username", "deviceId", "createdAt", "updatedAt"]
+    },
+    "ReferralRecordDoc": {
+      "title": "ReferralRecordDoc",
+      "description": "Verified referral or flagged scam referral record (doc ID = referred user UID)",
+      "type": "object",
+      "properties": {
+        "referrerId": { "type": "string" },
+        "referrerUsername": { "type": "string" },
+        "referredId": { "type": "string" },
+        "referredUsername": { "type": "string" },
+        "referredEmail": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "referredIp": { "type": "string" },
+        "referredDeviceId": { "type": "string" },
+        "bonusBdt": { "type": "number" },
+        "status": { "type": "string", "enum": ["CREDITED", "FAILED_SCAM"] },
+        "scamReason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "referrerId", "referrerUsername", "referredId", "referredUsername",
+        "referralCode", "bonusBdt", "status", "createdAt"
+      ]
+    },
+    "FraudAlertDoc": {
+      "title": "FraudAlertDoc",
+      "description": "Dedicated real-time fraud and scam alert for Owner Admin Panel",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "email": { "type": "string" },
+        "alertType": { "type": "string", "enum": ["REFERRAL_SCAM", "VPN_DETECTED", "FOREIGN_IP", "SUPPORT_ABUSE"] },
+        "titleBn": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "details": { "type": "string" },
+        "ipAddress": { "type": "string" },
+        "locationLabel": { "type": "string" },
+        "resolved": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "alertType", "titleBn", "titleEn", "details", "resolved", "createdAt"]
+    },
+    "RemovedAccountDoc": {
+      "title": "RemovedAccountDoc",
+      "description": "Permanently removed & blocked account registry preventing future sign-in",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "reason": { "type": "string" },
+        "removedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "removedAt"]
+    },
+    "MicroTaskDoc": {
+      "title": "MicroTaskDoc",
+      "description": "Admin-published microtask",
+      "type": "object",
+      "properties": {
+        "titleBn": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "category": { "type": "string" },
+        "rewardBdt": { "type": "number" },
+        "descriptionBn": { "type": "string" },
+        "descriptionEn": { "type": "string" },
+        "instructionsBn": { "type": "string" },
+        "instructionsEn": { "type": "string" },
+        "taskLink": { "type": "string" },
+        "deadlineText": { "type": "string" },
+        "totalSlots": { "type": "integer" },
+        "availableSlots": { "type": "integer" },
+        "featured": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "instantCredit": { "type": "boolean" },
+        "verificationCode": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "titleBn", "titleEn", "category", "rewardBdt", "descriptionBn", "descriptionEn",
+        "instructionsBn", "instructionsEn", "taskLink", "deadlineText", "totalSlots",
+        "availableSlots", "featured", "active", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "TaskProofDoc": {
+      "title": "TaskProofDoc",
+      "description": "User proof submission for a microtask (one per user per task)",
+      "type": "object",
+      "properties": {
+        "taskId": { "type": "string" },
+        "taskTitle": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "rewardBdt": { "type": "number" },
+        "proofNote": { "type": "string" },
+        "attachmentLabel": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING_REVIEW", "APPROVED", "REJECTED"] },
+        "adminNote": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["taskId", "taskTitle", "userId", "username", "rewardBdt", "proofNote", "status", "createdAt", "updatedAt"]
+    },
+    "TransactionDoc": {
+      "title": "TransactionDoc",
+      "description": "User wallet ledger transaction",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "titleBn": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "type": { "type": "string", "enum": ["TASK_EARNING", "WITHDRAWAL", "BONUS", "ADMIN_ADJUST"] },
+        "amountBdt": { "type": "number" },
+        "feeBdt": { "type": "number" },
+        "netAmountBdt": { "type": "number" },
+        "status": { "type": "string", "enum": ["COMPLETED", "APPROVED", "PENDING", "FAILED"] },
+        "referenceId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "titleBn", "titleEn", "type", "amountBdt", "status", "referenceId", "createdAt"]
+    },
+    "WithdrawalDoc": {
+      "title": "WithdrawalDoc",
+      "description": "User withdrawal request with 300 BDT minimum and tiered send-money fee",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "method": { "type": "string", "enum": ["BKASH_PERSONAL", "NAGAD_PERSONAL"] },
+        "accountNumber": { "type": "string" },
+        "amountBdt": { "type": "number" },
+        "feeBdt": { "type": "number" },
+        "totalDeductedBdt": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "COMPLETED", "FAILED"] },
+        "adminNote": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "method", "accountNumber", "amountBdt", "feeBdt", "totalDeductedBdt", "status", "createdAt", "updatedAt"]
+    },
+    "VipRequestDoc": {
+      "title": "VipRequestDoc",
+      "description": "VIP membership upgrade payment submission using Admin bKash/Nagad",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "targetTier": { "type": "string", "enum": ["BRONZE", "SILVER", "GOLD", "DIAMOND"] },
+        "method": { "type": "string", "enum": ["BKASH_PERSONAL", "NAGAD_PERSONAL"] },
+        "senderNumber": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "amountBdt": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "COMPLETED", "FAILED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "targetTier", "method", "senderNumber", "transactionId", "amountBdt", "status", "createdAt", "updatedAt"]
+    },
+    "SupportTicketDoc": {
+      "title": "SupportTicketDoc",
+      "description": "User support message / ticket (direct Admin chat)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fullName": { "type": "string" },
+        "username": { "type": "string" },
+        "category": { "type": "string" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "attachmentLabel": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "IN_REVIEW", "RESOLVED"] },
+        "adminReply": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "category", "subject", "message", "status", "createdAt", "updatedAt"]
+    },
+    "AnnouncementDoc": {
+      "title": "AnnouncementDoc",
+      "description": "Global platform notices and app update notifications",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "titleBn": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "messageBn": { "type": "string" },
+        "messageEn": { "type": "string" },
+        "appVersion": { "type": "string" },
+        "updateUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["category", "titleBn", "titleEn", "messageBn", "messageEn", "createdAt"]
+    },
+    "AppConfigDoc": {
+      "title": "AppConfigDoc",
+      "description": "Admin payment numbers, VIP prices, video ads config, security toggles, maintenance stop timer, and extra dashboard top notice",
+      "type": "object",
+      "properties": {
+        "bkashNumber": { "type": "string" },
+        "nagadNumber": { "type": "string" },
+        "vipBronzePriceBdt": { "type": "number" },
+        "vipSilverPriceBdt": { "type": "number" },
+        "vipGoldPriceBdt": { "type": "number" },
+        "vipDiamondPriceBdt": { "type": "number" },
+        "latestAppVersion": { "type": "string" },
+        "appDownloadUrl": { "type": "string" },
+        "updateMessageBn": { "type": "string" },
+        "updateMessageEn": { "type": "string" },
+        "videoAdsEnabled": { "type": "boolean" },
+        "videoAdsComingSoon": { "type": "boolean" },
+        "videoAdsRewardBdt": { "type": "number" },
+        "videoAdsTitleBn": { "type": "string" },
+        "videoAdsTitleEn": { "type": "string" },
+        "videoAdsUrl": { "type": "string" },
+        "vpnAutoBanEnabled": { "type": "boolean" },
+        "foreignIpAutoBanEnabled": { "type": "boolean" },
+        "appStopped": { "type": "boolean" },
+        "stopMessageBn": { "type": "string" },
+        "stopMessageEn": { "type": "string" },
+        "stopEndEpochMillis": { "type": "integer" },
+        "dashboardTopNoticeActive": { "type": "boolean" },
+        "dashboardTopNoticeBn": { "type": "string" },
+        "dashboardTopNoticeEn": { "type": "string" },
+        "supportEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bkashNumber", "nagadNumber", "vipBronzePriceBdt", "vipSilverPriceBdt", "vipGoldPriceBdt", "vipDiamondPriceBdt", "latestAppVersion", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": { "$ref": "#/entities/UserAccount" }, "description": "User accounts and wallets" },
+    "/leaderboard_public/{userId}": { "schema": { "$ref": "#/entities/LeaderboardPublic" }, "description": "PII-free public ranking" },
+    "/mobile_registry/{mobileId}": { "schema": { "$ref": "#/entities/UniqueRegistry" }, "description": "One account per BD mobile" },
+    "/device_registry/{deviceId}": { "schema": { "$ref": "#/entities/UniqueRegistry" }, "description": "One account per device" },
+    "/wallet_registry/{walletNumber}": { "schema": { "$ref": "#/entities/UniqueRegistry" }, "description": "Global one-wallet-per-account enforcement for bKash/Nagad numbers" },
+    "/referral_codes/{code}": { "schema": { "$ref": "#/entities/ReferralCodeDoc" }, "description": "Referral codes mapped to owner userId, deviceId, and IP" },
+    "/referrals/{referredUid}": { "schema": { "$ref": "#/entities/ReferralRecordDoc" }, "description": "Referral verification and scam audit log" },
+    "/fraud_alerts/{alertId}": { "schema": { "$ref": "#/entities/FraudAlertDoc" }, "description": "Real-time scam and fraud alerts for admin panel" },
+    "/removed_accounts/{userId}": { "schema": { "$ref": "#/entities/RemovedAccountDoc" }, "description": "Permanently removed & blocked UID registry" },
+    "/removed_emails/{emailKey}": { "schema": { "$ref": "#/entities/RemovedAccountDoc" }, "description": "Permanently removed & blocked email registry" },
+    "/tasks/{taskId}": { "schema": { "$ref": "#/entities/MicroTaskDoc" }, "description": "Microtasks created by owner admin" },
+    "/task_proofs/{proofId}": { "schema": { "$ref": "#/entities/TaskProofDoc" }, "description": "User task proofs" },
+    "/transactions/{txnId}": { "schema": { "$ref": "#/entities/TransactionDoc" }, "description": "Wallet ledger" },
+    "/withdrawals/{withdrawalId}": { "schema": { "$ref": "#/entities/WithdrawalDoc" }, "description": "Withdrawal requests" },
+    "/vip_requests/{requestId}": { "schema": { "$ref": "#/entities/VipRequestDoc" }, "description": "VIP payment requests" },
+    "/support_tickets/{ticketId}": { "schema": { "$ref": "#/entities/SupportTicketDoc" }, "description": "Support tickets" },
+    "/announcements/{announcementId}": { "schema": { "$ref": "#/entities/AnnouncementDoc" }, "description": "Notices and app updates" },
+    "/app_config/{docId}": { "schema": { "$ref": "#/entities/AppConfigDoc" }, "description": "Admin payment & app settings" }
+  }
+}

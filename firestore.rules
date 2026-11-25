@@ -1,0 +1,750 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Owner-Only Admin Gate: requires verified email matching owner account
+    function isOwnerAdmin() {
+      return isSignedIn() &&
+        'email' in request.auth.token &&
+        'email_verified' in request.auth.token &&
+        request.auth.token.email == 'wahidzroman@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidBdMobile(m) {
+      return m is string && m.size() == 11 && m.matches('^01[3-9][0-9]{8}$');
+    }
+
+    function isValidVipTier(tier) {
+      return tier in ['REGULAR', 'BRONZE', 'SILVER', 'GOLD', 'DIAMOND'];
+    }
+
+    function isValidVipScaledReward(reward, baseReward, tier) {
+      return (
+        (tier == 'REGULAR' && math.abs(reward - baseReward) < 0.02) ||
+        (tier == 'BRONZE' && math.abs(reward - (baseReward * 1.02)) < 0.02) ||
+        (tier == 'SILVER' && math.abs(reward - (baseReward * 1.04)) < 0.02) ||
+        (tier == 'GOLD' && math.abs(reward - (baseReward * 1.07)) < 0.02) ||
+        (tier == 'DIAMOND' && math.abs(reward - (baseReward * 1.10)) < 0.02)
+      );
+    }
+
+    function taskProofMatchesUserVip(reward, baseReward, uid) {
+      return (
+        (!exists(/databases/$(database)/documents/users/$(uid)) && math.abs(reward - baseReward) < 0.02) ||
+        (exists(/databases/$(database)/documents/users/$(uid)) &&
+          isValidVipScaledReward(reward, baseReward, get(/databases/$(database)/documents/users/$(uid)).data.vipTier))
+      );
+    }
+
+    function isAppNotStopped() {
+      return isOwnerAdmin() ||
+        !exists(/databases/$(database)/documents/app_config/payment_settings) ||
+        get(/databases/$(database)/documents/app_config/payment_settings).data.get('appStopped', false) == false ||
+        (
+          get(/databases/$(database)/documents/app_config/payment_settings).data.get('stopEndEpochMillis', 0) > 0 &&
+          request.time.toMillis() >= get(/databases/$(database)/documents/app_config/payment_settings).data.get('stopEndEpochMillis', 0)
+        );
+    }
+
+    function isValidUserAccount(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.accountId is string && data.accountId.size() >= 4 && data.accountId.size() <= 32 &&
+        data.email is string && data.email.size() <= 200 &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+        data.username is string && data.username.size() >= 3 && data.username.size() <= 40 &&
+        isValidBdMobile(data.mobileNumber) &&
+        data.deviceId is string && data.deviceId.size() >= 4 && data.deviceId.size() <= 128 &&
+        (!('bkashPersonal' in data) || data.bkashPersonal == null || (data.bkashPersonal is string && data.bkashPersonal.size() <= 20)) &&
+        (!('nagadPersonal' in data) || data.nagadPersonal == null || (data.nagadPersonal is string && data.nagadPersonal.size() <= 20)) &&
+        (!('paymentAccountsLocked' in data) || data.paymentAccountsLocked is bool) &&
+        (!('walletChangeApprovedOnce' in data) || data.walletChangeApprovedOnce is bool) &&
+        (!('walletResetCount' in data) || (data.walletResetCount is int && data.walletResetCount >= 0)) &&
+        (!('securityPasswordHash' in data) || data.securityPasswordHash == null || (data.securityPasswordHash is string && data.securityPasswordHash.size() <= 128)) &&
+        isValidVipTier(data.vipTier) &&
+        data.banned is bool &&
+        (!('permanentlyBanned' in data) || data.permanentlyBanned is bool) &&
+        (!('twoFactorEnabled' in data) || data.twoFactorEnabled is bool) &&
+        (!('loginAlertsEnabled' in data) || data.loginAlertsEnabled is bool) &&
+        data.registrationBonusClaimed is bool &&
+        data.availableBalanceBdt is number && data.availableBalanceBdt >= 0 &&
+        data.pendingBalanceBdt is number && data.pendingBalanceBdt >= 0 &&
+        data.totalEarningsBdt is number && data.totalEarningsBdt >= 0 &&
+        data.totalWithdrawalsBdt is number && data.totalWithdrawalsBdt >= 0 &&
+        (!('dailyEarningsBdt' in data) || (data.dailyEarningsBdt is number && data.dailyEarningsBdt >= 0)) &&
+        (!('lastIpAddress' in data) || data.lastIpAddress == null || (data.lastIpAddress is string && data.lastIpAddress.size() <= 64)) &&
+        (!('lastCountryCode' in data) || data.lastCountryCode == null || (data.lastCountryCode is string && data.lastCountryCode.size() <= 16)) &&
+        (!('lastLocation' in data) || data.lastLocation == null || (data.lastLocation is string && data.lastLocation.size() <= 160)) &&
+        (!('vpnDetected' in data) || data.vpnDetected is bool) &&
+        (!('banReason' in data) || data.banReason == null || (data.banReason is string && data.banReason.size() <= 160)) &&
+        (!('referralCode' in data) || (data.referralCode is string && data.referralCode.size() <= 32)) &&
+        (!('referredByCode' in data) || data.referredByCode == null || (data.referredByCode is string && data.referredByCode.size() <= 32)) &&
+        (!('referredByUid' in data) || data.referredByUid == null || (data.referredByUid is string && data.referredByUid.size() <= 128)) &&
+        (!('referralCount' in data) || (data.referralCount is int && data.referralCount >= 0)) &&
+        (!('referralEarningsBdt' in data) || (data.referralEarningsBdt is number && data.referralEarningsBdt >= 0)) &&
+        (!('referralScamCount' in data) || (data.referralScamCount is int && data.referralScamCount >= 0)) &&
+        (!('lastCompletedTaskId' in data) || data.lastCompletedTaskId == null || isValidId(data.lastCompletedTaskId)) &&
+        data.completedTasksCount is int && data.completedTasksCount >= 0 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLeaderboardPublic(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 100 &&
+        data.username is string && data.username.size() >= 3 && data.username.size() <= 40 &&
+        isValidVipTier(data.vipTier) &&
+        data.tasksCompleted is int && data.tasksCompleted >= 0 &&
+        data.earningsBdt is number && data.earningsBdt >= 0 &&
+        (!('availableBalanceBdt' in data) || (data.availableBalanceBdt is number && data.availableBalanceBdt >= 0)) &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidRegistry(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidReferralCode(data) {
+      return data.code is string && data.code.size() >= 3 && data.code.size() <= 32 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        data.deviceId is string && data.deviceId.size() >= 4 && data.deviceId.size() <= 128 &&
+        (!('lastIpAddress' in data) || data.lastIpAddress == null || (data.lastIpAddress is string && data.lastIpAddress.size() <= 64)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidReferralRecord(data) {
+      return data.referrerId is string && data.referrerId.size() >= 1 && data.referrerId.size() <= 128 &&
+        data.referrerUsername is string && data.referrerUsername.size() >= 1 && data.referrerUsername.size() <= 50 &&
+        data.referredId is string && data.referredId.size() >= 1 && data.referredId.size() <= 128 &&
+        data.referredUsername is string && data.referredUsername.size() >= 1 && data.referredUsername.size() <= 50 &&
+        (!('referredEmail' in data) || data.referredEmail == null || (data.referredEmail is string && data.referredEmail.size() <= 200)) &&
+        data.referralCode is string && data.referralCode.size() >= 3 && data.referralCode.size() <= 32 &&
+        (!('referredIp' in data) || data.referredIp == null || (data.referredIp is string && data.referredIp.size() <= 64)) &&
+        (!('referredDeviceId' in data) || data.referredDeviceId == null || (data.referredDeviceId is string && data.referredDeviceId.size() <= 128)) &&
+        data.bonusBdt is number && (data.bonusBdt == 0 || data.bonusBdt == 15) &&
+        data.status in ['CREDITED', 'FAILED_SCAM'] &&
+        (!('scamReason' in data) || data.scamReason == null || (data.scamReason is string && data.scamReason.size() <= 300)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidFraudAlert(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 200)) &&
+        data.alertType in ['REFERRAL_SCAM', 'VPN_DETECTED', 'FOREIGN_IP', 'SUPPORT_ABUSE'] &&
+        data.titleBn is string && data.titleBn.size() >= 1 && data.titleBn.size() <= 200 &&
+        data.titleEn is string && data.titleEn.size() >= 1 && data.titleEn.size() <= 200 &&
+        data.details is string && data.details.size() >= 1 && data.details.size() <= 1000 &&
+        (!('ipAddress' in data) || data.ipAddress == null || (data.ipAddress is string && data.ipAddress.size() <= 64)) &&
+        (!('locationLabel' in data) || data.locationLabel == null || (data.locationLabel is string && data.locationLabel.size() <= 160)) &&
+        data.resolved is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidRemovedAccount(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 200)) &&
+        (!('reason' in data) || data.reason == null || (data.reason is string && data.reason.size() <= 300)) &&
+        data.removedAt is timestamp && data.removedAt <= request.time;
+    }
+
+    function isValidMicroTask(data) {
+      return data.titleBn is string && data.titleBn.size() >= 2 && data.titleBn.size() <= 160 &&
+        data.titleEn is string && data.titleEn.size() >= 2 && data.titleEn.size() <= 160 &&
+        data.category is string && data.category in ['SURVEY', 'WEBSITE', 'APP_TESTING', 'QUICK_QUIZ', 'DATA_ENTRY', 'IMAGE_TASKS', 'ADVERTISEMENT', 'OTHER'] &&
+        data.rewardBdt is number && data.rewardBdt > 0 && data.rewardBdt <= 50000 &&
+        data.descriptionBn is string && data.descriptionBn.size() <= 1000 &&
+        data.descriptionEn is string && data.descriptionEn.size() <= 1000 &&
+        data.instructionsBn is string && data.instructionsBn.size() <= 3000 &&
+        data.instructionsEn is string && data.instructionsEn.size() <= 3000 &&
+        data.taskLink is string && data.taskLink.size() <= 500 &&
+        data.deadlineText is string && data.deadlineText.size() <= 80 &&
+        data.totalSlots is int && data.totalSlots >= 1 && data.totalSlots <= 1000000 &&
+        data.availableSlots is int && data.availableSlots >= 0 && data.availableSlots <= data.totalSlots &&
+        data.featured is bool &&
+        data.active is bool &&
+        (!('instantCredit' in data) || data.instantCredit is bool) &&
+        (!('verificationCode' in data) || (data.verificationCode is string && data.verificationCode.size() <= 120)) &&
+        data.createdBy is string && data.createdBy.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTaskProof(data) {
+      return data.taskId is string && isValidId(data.taskId) &&
+        data.taskTitle is string && data.taskTitle.size() >= 1 && data.taskTitle.size() <= 200 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        data.rewardBdt is number && data.rewardBdt > 0 && data.rewardBdt <= 55000 &&
+        data.proofNote is string && data.proofNote.size() >= 1 && data.proofNote.size() <= 1500 &&
+        (!('attachmentLabel' in data) || data.attachmentLabel == null || (data.attachmentLabel is string && data.attachmentLabel.size() <= 200)) &&
+        data.status in ['PENDING_REVIEW', 'APPROVED', 'REJECTED'] &&
+        (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 500)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTransaction(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.titleBn is string && data.titleBn.size() >= 1 && data.titleBn.size() <= 200 &&
+        data.titleEn is string && data.titleEn.size() >= 1 && data.titleEn.size() <= 200 &&
+        data.type in ['TASK_EARNING', 'WITHDRAWAL', 'BONUS', 'ADMIN_ADJUST'] &&
+        data.amountBdt is number &&
+        (!('feeBdt' in data) || (data.feeBdt is number && data.feeBdt >= 0)) &&
+        (!('netAmountBdt' in data) || (data.netAmountBdt is number && data.netAmountBdt >= 0)) &&
+        data.status in ['COMPLETED', 'APPROVED', 'PENDING', 'FAILED'] &&
+        data.referenceId is string && data.referenceId.size() >= 1 && data.referenceId.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidWithdrawalRemainderFee(fee, k, rem) {
+      return (
+        (k == 0 && rem <= 800 && fee == 10) ||
+        (k == 0 && rem > 800 && fee == 20) ||
+        (k >= 1 && rem == 0 && fee == k * 20) ||
+        (k >= 1 && rem > 0 && rem <= 300 && fee == (k * 20) + 5) ||
+        (k >= 1 && rem > 300 && rem <= 800 && fee == (k * 20) + 10) ||
+        (k >= 1 && rem > 800 && fee == (k * 20) + 20)
+      );
+    }
+
+    function isValidWithdrawal(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        data.method in ['BKASH_PERSONAL', 'NAGAD_PERSONAL'] &&
+        isValidBdMobile(data.accountNumber) &&
+        data.amountBdt is number && data.amountBdt >= 300 &&
+        data.feeBdt is number &&
+        isValidWithdrawalRemainderFee(
+          data.feeBdt,
+          math.floor(data.amountBdt / 1000),
+          data.amountBdt - (math.floor(data.amountBdt / 1000) * 1000)
+        ) &&
+        data.totalDeductedBdt is number &&
+        math.abs(data.totalDeductedBdt - (data.amountBdt + data.feeBdt)) < 0.01 &&
+        data.status in ['PENDING', 'APPROVED', 'COMPLETED', 'FAILED'] &&
+        (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 500)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidVipRequest(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        isValidVipTier(data.targetTier) &&
+        data.method in ['BKASH_PERSONAL', 'NAGAD_PERSONAL'] &&
+        isValidBdMobile(data.senderNumber) &&
+        data.transactionId is string && data.transactionId.size() >= 4 && data.transactionId.size() <= 60 &&
+        data.amountBdt is number && data.amountBdt >= 0 && data.amountBdt <= 100000 &&
+        data.status in ['PENDING', 'COMPLETED', 'FAILED'] &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSupportTicket(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        (!('fullName' in data) || data.fullName == null || (data.fullName is string && data.fullName.size() <= 100)) &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 50 &&
+        data.category in ['TASK_ISSUE', 'WALLET_WITHDRAWAL', 'ACCOUNT_SECURITY', 'VIP_GENERAL'] &&
+        data.subject is string && data.subject.size() >= 3 && data.subject.size() <= 160 &&
+        data.message is string && data.message.size() >= 5 && data.message.size() <= 2000 &&
+        (!('attachmentLabel' in data) || data.attachmentLabel == null || (data.attachmentLabel is string && data.attachmentLabel.size() <= 200)) &&
+        data.status in ['OPEN', 'IN_REVIEW', 'RESOLVED'] &&
+        (!('adminReply' in data) || data.adminReply == null || (data.adminReply is string && data.adminReply.size() <= 1000)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAnnouncement(data) {
+      return data.category in ['NEW', 'TASK_UPDATE', 'WITHDRAWAL_UPDATE', 'ACCOUNT_ALERT', 'ANNOUNCEMENT'] &&
+        data.titleBn is string && data.titleBn.size() >= 1 && data.titleBn.size() <= 200 &&
+        data.titleEn is string && data.titleEn.size() >= 1 && data.titleEn.size() <= 200 &&
+        data.messageBn is string && data.messageBn.size() >= 1 && data.messageBn.size() <= 2000 &&
+        data.messageEn is string && data.messageEn.size() >= 1 && data.messageEn.size() <= 2000 &&
+        (!('appVersion' in data) || data.appVersion == null || (data.appVersion is string && data.appVersion.size() <= 40)) &&
+        (!('updateUrl' in data) || data.updateUrl == null || (data.updateUrl is string && data.updateUrl.size() <= 400)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidAppConfig(data) {
+      return isValidBdMobile(data.bkashNumber) &&
+        isValidBdMobile(data.nagadNumber) &&
+        data.vipBronzePriceBdt is number && data.vipBronzePriceBdt >= 0 &&
+        data.vipSilverPriceBdt is number && data.vipSilverPriceBdt >= 0 &&
+        data.vipGoldPriceBdt is number && data.vipGoldPriceBdt >= 0 &&
+        data.vipDiamondPriceBdt is number && data.vipDiamondPriceBdt >= 0 &&
+        data.latestAppVersion is string && data.latestAppVersion.size() <= 40 &&
+        (!('appDownloadUrl' in data) || data.appDownloadUrl == null || (data.appDownloadUrl is string && data.appDownloadUrl.size() <= 500)) &&
+        (!('updateMessageBn' in data) || data.updateMessageBn == null || (data.updateMessageBn is string && data.updateMessageBn.size() <= 500)) &&
+        (!('updateMessageEn' in data) || data.updateMessageEn == null || (data.updateMessageEn is string && data.updateMessageEn.size() <= 500)) &&
+        (!('videoAdsEnabled' in data) || data.videoAdsEnabled is bool) &&
+        (!('videoAdsComingSoon' in data) || data.videoAdsComingSoon is bool) &&
+        (!('videoAdsRewardBdt' in data) || (data.videoAdsRewardBdt is number && data.videoAdsRewardBdt >= 0 && data.videoAdsRewardBdt <= 1000)) &&
+        (!('videoAdsTitleBn' in data) || data.videoAdsTitleBn == null || (data.videoAdsTitleBn is string && data.videoAdsTitleBn.size() <= 160)) &&
+        (!('videoAdsTitleEn' in data) || data.videoAdsTitleEn == null || (data.videoAdsTitleEn is string && data.videoAdsTitleEn.size() <= 160)) &&
+        (!('videoAdsUrl' in data) || data.videoAdsUrl == null || (data.videoAdsUrl is string && data.videoAdsUrl.size() <= 500)) &&
+        (!('vpnAutoBanEnabled' in data) || data.vpnAutoBanEnabled is bool) &&
+        (!('foreignIpAutoBanEnabled' in data) || data.foreignIpAutoBanEnabled is bool) &&
+        (!('appStopped' in data) || data.appStopped is bool) &&
+        (!('stopMessageBn' in data) || data.stopMessageBn == null || (data.stopMessageBn is string && data.stopMessageBn.size() <= 500)) &&
+        (!('stopMessageEn' in data) || data.stopMessageEn == null || (data.stopMessageEn is string && data.stopMessageEn.size() <= 500)) &&
+        (!('stopEndEpochMillis' in data) || (data.stopEndEpochMillis is int && data.stopEndEpochMillis >= 0)) &&
+        (!('dashboardTopNoticeActive' in data) || data.dashboardTopNoticeActive is bool) &&
+        (!('dashboardTopNoticeBn' in data) || data.dashboardTopNoticeBn == null || (data.dashboardTopNoticeBn is string && data.dashboardTopNoticeBn.size() <= 500)) &&
+        (!('dashboardTopNoticeEn' in data) || data.dashboardTopNoticeEn == null || (data.dashboardTopNoticeEn is string && data.dashboardTopNoticeEn.size() <= 500)) &&
+        (!('supportEnabled' in data) || data.supportEnabled is bool) &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // --- COLLECTIONS ---
+
+    function verifyInstantTaskUpdate(userId, taskId, taskBefore, taskAfter) {
+      return taskBefore.active == true &&
+        taskBefore.get('instantCredit', false) == true &&
+        taskAfter.availableSlots == taskBefore.availableSlots - 1 &&
+        isValidVipScaledReward(
+          incoming().availableBalanceBdt - existing().availableBalanceBdt,
+          taskBefore.rewardBdt,
+          existing().vipTier
+        ) &&
+        math.abs((incoming().totalEarningsBdt - existing().totalEarningsBdt) - (incoming().availableBalanceBdt - existing().availableBalanceBdt)) < 0.01 &&
+        incoming().completedTasksCount == existing().completedTasksCount + 1;
+    }
+
+    function verifyReferralCreditUpdate(userId, refAfter) {
+      return refAfter.referrerId == userId &&
+        refAfter.status == 'CREDITED' &&
+        refAfter.bonusBdt == 15 &&
+        incoming().availableBalanceBdt == existing().availableBalanceBdt + 15 &&
+        incoming().totalEarningsBdt == existing().totalEarningsBdt + 15 &&
+        incoming().referralCount == (existing().get('referralCount', 0)) + 1 &&
+        incoming().referralEarningsBdt == (existing().get('referralEarningsBdt', 0)) + 15;
+    }
+
+    function canUpdateUser(userId, affected) {
+      return isOwnerAdmin() ||
+        (
+          isOwner(userId) &&
+          existing().banned == false &&
+          (
+            // Action 1a: Safe profile/security/password edit
+            affected.hasOnly(['fullName', 'username', 'twoFactorEnabled', 'loginAlertsEnabled', 'securityPasswordHash', 'updatedAt']) ||
+            // Action 1b: One-Time Permanent Wallet Setup or Admin-Granted 1x Re-Setup
+            (
+              affected.hasOnly([
+                'bkashPersonal', 'nagadPersonal', 'paymentAccountsLocked',
+                'walletChangeApprovedOnce', 'walletResetCount', 'updatedAt'
+              ]) &&
+              existing().get('paymentAccountsLocked', false) == false &&
+              incoming().get('paymentAccountsLocked', false) == true &&
+              incoming().get('walletChangeApprovedOnce', false) == false &&
+              incoming().get('walletResetCount', 0) <= existing().get('walletResetCount', 0) + 1 &&
+              isValidBdMobile(incoming().bkashPersonal) &&
+              isValidBdMobile(incoming().nagadPersonal) &&
+              existsAfter(/databases/$(database)/documents/wallet_registry/$(incoming().bkashPersonal)) &&
+              getAfter(/databases/$(database)/documents/wallet_registry/$(incoming().bkashPersonal)).data.userId == userId &&
+              existsAfter(/databases/$(database)/documents/wallet_registry/$(incoming().nagadPersonal)) &&
+              getAfter(/databases/$(database)/documents/wallet_registry/$(incoming().nagadPersonal)).data.userId == userId
+            ) ||
+            // Action 2: Withdrawal deduction (amount >= 300 + >= 10 fee = >= 310 moved from available to pending)
+            (
+              affected.hasOnly(['availableBalanceBdt', 'pendingBalanceBdt', 'updatedAt']) &&
+              incoming().availableBalanceBdt >= 0 &&
+              incoming().pendingBalanceBdt > existing().pendingBalanceBdt &&
+              math.abs((existing().availableBalanceBdt - incoming().availableBalanceBdt) - (incoming().pendingBalanceBdt - existing().pendingBalanceBdt)) < 0.01 &&
+              (existing().availableBalanceBdt - incoming().availableBalanceBdt) >= 310
+            ) ||
+            // Action 3: Proof submission increments pending balance by VIP-scaled task reward
+            (
+              affected.hasOnly(['pendingBalanceBdt', 'updatedAt']) &&
+              incoming().pendingBalanceBdt > existing().pendingBalanceBdt &&
+              (incoming().pendingBalanceBdt - existing().pendingBalanceBdt) <= 55000
+            ) ||
+            // Action 3b: Verified Instant Task Credit
+            (
+              affected.hasOnly(['availableBalanceBdt', 'totalEarningsBdt', 'dailyEarningsBdt', 'completedTasksCount', 'lastCompletedTaskId', 'updatedAt']) &&
+              incoming().lastCompletedTaskId is string && isValidId(incoming().lastCompletedTaskId) &&
+              !exists(/databases/$(database)/documents/task_proofs/$(incoming().lastCompletedTaskId + '_' + userId)) &&
+              existsAfter(/databases/$(database)/documents/task_proofs/$(incoming().lastCompletedTaskId + '_' + userId)) &&
+              verifyInstantTaskUpdate(
+                userId,
+                incoming().lastCompletedTaskId,
+                get(/databases/$(database)/documents/tasks/$(incoming().lastCompletedTaskId)).data,
+                getAfter(/databases/$(database)/documents/tasks/$(incoming().lastCompletedTaskId)).data
+              )
+            ) ||
+            // Action 4: Safe network/IP/location telemetry update
+            affected.hasOnly(['lastIpAddress', 'lastCountryCode', 'lastLocation', 'vpnDetected', 'updatedAt']) ||
+            // Action 5: Irreversible client-reported VPN / foreign-IP auto-ban
+            (
+              affected.hasOnly(['banned', 'permanentlyBanned', 'banReason', 'lastIpAddress', 'lastCountryCode', 'lastLocation', 'vpnDetected', 'updatedAt']) &&
+              incoming().banned == true
+            )
+          )
+        ) ||
+        (
+          // Action 6: Atomic verified referral 15 BDT credit to referrer inside signup batch
+          isSignedIn() && request.auth.uid != userId &&
+          existing().banned == false &&
+          affected.hasOnly(['availableBalanceBdt', 'totalEarningsBdt', 'referralCount', 'referralEarningsBdt', 'updatedAt']) &&
+          !exists(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          verifyReferralCreditUpdate(userId, getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data)
+        ) ||
+        (
+          // Action 7: Atomic referral scam counter increment on referrer when referral fails fraud check
+          isSignedIn() && request.auth.uid != userId &&
+          affected.hasOnly(['referralScamCount', 'updatedAt']) &&
+          !exists(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.referrerId == userId &&
+          getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.status == 'FAILED_SCAM' &&
+          incoming().referralScamCount == (existing().get('referralScamCount', 0)) + 1
+        );
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isOwnerAdmin());
+      allow list: if isOwnerAdmin();
+
+      // Registration grants exact 10 BDT bonus, enforces non-banned REGULAR start, and rejects permanently removed UIDs
+      allow create: if isValidId(userId) && isOwner(userId) &&
+        isAppNotStopped() &&
+        !exists(/databases/$(database)/documents/removed_accounts/$(request.auth.uid)) &&
+        isValidUserAccount(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        (!('banned' in incoming()) || incoming().banned == false) &&
+        (!('permanentlyBanned' in incoming()) || incoming().permanentlyBanned == false) &&
+        (!('paymentAccountsLocked' in incoming()) || incoming().paymentAccountsLocked == false) &&
+        (!('walletChangeApprovedOnce' in incoming()) || incoming().walletChangeApprovedOnce == false) &&
+        (!('walletResetCount' in incoming()) || incoming().walletResetCount == 0) &&
+        (!('referralCount' in incoming()) || incoming().referralCount == 0) &&
+        (!('referralEarningsBdt' in incoming()) || incoming().referralEarningsBdt == 0) &&
+        (!('referralScamCount' in incoming()) || incoming().referralScamCount == 0) &&
+        incoming().vipTier == 'REGULAR' &&
+        incoming().registrationBonusClaimed == true &&
+        incoming().availableBalanceBdt == 10 &&
+        incoming().pendingBalanceBdt == 0 &&
+        incoming().totalEarningsBdt == 10 &&
+        incoming().totalWithdrawalsBdt == 0 &&
+        incoming().completedTasksCount == 0 &&
+        incoming().keys().hasAll([
+          'userId', 'accountId', 'email', 'fullName', 'username', 'mobileNumber', 'deviceId',
+          'vipTier', 'banned', 'registrationBonusClaimed', 'availableBalanceBdt',
+          'pendingBalanceBdt', 'totalEarningsBdt', 'totalWithdrawalsBdt', 'completedTasksCount',
+          'createdAt', 'updatedAt'
+        ]);
+
+      allow update: if isValidId(userId) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidUserAccount(incoming()) &&
+        canUpdateUser(userId, incoming().diff(existing()).affectedKeys());
+
+      allow delete: if isOwnerAdmin();
+    }
+
+    match /leaderboard_public/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(userId) && isOwner(userId) &&
+        isValidLeaderboardPublic(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        (
+          (
+            incoming().vipTier in ['REGULAR', 'BRONZE'] &&
+            incoming().tasksCompleted == 0 &&
+            incoming().earningsBdt == 10 &&
+            (!('availableBalanceBdt' in incoming()) || incoming().availableBalanceBdt == 10)
+          ) ||
+          (
+            exists(/databases/$(database)/documents/users/$(userId)) &&
+            incoming().vipTier == get(/databases/$(database)/documents/users/$(userId)).data.vipTier &&
+            incoming().tasksCompleted == get(/databases/$(database)/documents/users/$(userId)).data.completedTasksCount &&
+            incoming().earningsBdt == get(/databases/$(database)/documents/users/$(userId)).data.totalEarningsBdt &&
+            incoming().get('availableBalanceBdt', 0) == get(/databases/$(database)/documents/users/$(userId)).data.availableBalanceBdt
+          )
+        );
+      allow update: if isValidId(userId) && isValidLeaderboardPublic(incoming()) &&
+        incoming().userId == existing().userId && (
+          isOwnerAdmin() ||
+          (isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'username', 'updatedAt'])) ||
+          (
+            isOwner(userId) &&
+            existsAfter(/databases/$(database)/documents/users/$(userId)) &&
+            incoming().vipTier == getAfter(/databases/$(database)/documents/users/$(userId)).data.vipTier &&
+            incoming().tasksCompleted == getAfter(/databases/$(database)/documents/users/$(userId)).data.completedTasksCount &&
+            incoming().earningsBdt == getAfter(/databases/$(database)/documents/users/$(userId)).data.totalEarningsBdt &&
+            incoming().get('availableBalanceBdt', 0) == getAfter(/databases/$(database)/documents/users/$(userId)).data.availableBalanceBdt &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'username', 'vipTier', 'tasksCompleted',
+              'earningsBdt', 'availableBalanceBdt', 'updatedAt'
+            ])
+          ) ||
+          (
+            isSignedIn() && request.auth.uid != userId &&
+            !exists(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+            existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+            getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.referrerId == userId &&
+            getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.status == 'CREDITED' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['earningsBdt', 'availableBalanceBdt', 'updatedAt']) &&
+            incoming().earningsBdt == existing().earningsBdt + 15 &&
+            (!('availableBalanceBdt' in incoming().diff(existing()).affectedKeys()) ||
+              incoming().availableBalanceBdt == existing().get('availableBalanceBdt', existing().earningsBdt) + 15)
+          )
+        );
+      allow delete: if isOwnerAdmin();
+    }
+
+    match /mobile_registry/{mobileId} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create: if isValidBdMobile(mobileId) && isSignedIn() &&
+        isValidRegistry(incoming()) &&
+        incoming().userId == request.auth.uid;
+      allow update, delete: if isOwnerAdmin();
+    }
+
+    match /device_registry/{deviceId} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create: if isValidId(deviceId) && isSignedIn() &&
+        isValidRegistry(incoming()) &&
+        incoming().userId == request.auth.uid;
+      allow update, delete: if isOwnerAdmin();
+    }
+
+    match /wallet_registry/{walletNumber} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create: if isValidBdMobile(walletNumber) && isSignedIn() &&
+        isValidRegistry(incoming()) &&
+        incoming().userId == request.auth.uid;
+      allow update: if isOwnerAdmin() || (
+        isValidBdMobile(walletNumber) && isSignedIn() &&
+        existing().userId == request.auth.uid &&
+        isValidRegistry(incoming()) &&
+        incoming().userId == request.auth.uid
+      );
+      allow delete: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+    }
+
+    match /referral_codes/{code} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create: if isValidId(code) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        isValidReferralCode(incoming());
+      allow update: if isValidId(code) && (
+        isOwnerAdmin() ||
+        (
+          isSignedIn() && existing().userId == request.auth.uid &&
+          incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['lastIpAddress', 'updatedAt'])
+        )
+      );
+      allow delete: if isOwnerAdmin();
+    }
+
+    match /referrals/{referredUid} {
+      allow get: if isSignedIn() && (existing().referrerId == request.auth.uid || existing().referredId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().referrerId == request.auth.uid);
+      allow create: if isValidId(referredUid) && isSignedIn() &&
+        referredUid == request.auth.uid &&
+        isValidReferralRecord(incoming()) &&
+        incoming().referredId == request.auth.uid;
+      allow update, delete: if isOwnerAdmin();
+    }
+
+    match /fraud_alerts/{alertId} {
+      allow get, list: if isOwnerAdmin();
+      allow create: if isValidId(alertId) && isSignedIn() && isValidFraudAlert(incoming());
+      allow update, delete: if isOwnerAdmin();
+    }
+
+    match /removed_accounts/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create, update: if isOwnerAdmin() && isValidRemovedAccount(incoming());
+      allow delete: if isOwnerAdmin();
+    }
+
+    match /removed_emails/{emailKey} {
+      allow get: if isSignedIn();
+      allow list: if isOwnerAdmin();
+      allow create, update: if isOwnerAdmin() && isValidRemovedAccount(incoming());
+      allow delete: if isOwnerAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(taskId) && isOwnerAdmin() && isValidMicroTask(incoming());
+      allow update: if isValidId(taskId) && isValidMicroTask(incoming()) &&
+        incoming().createdAt == existing().createdAt && (
+          isOwnerAdmin() ||
+          (
+            isSignedIn() &&
+            isAppNotStopped() &&
+            existing().active == true &&
+            existing().availableSlots >= 1 &&
+            incoming().availableSlots == existing().availableSlots - 1 &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['availableSlots', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(taskId) && isOwnerAdmin();
+    }
+
+    match /task_proofs/{proofId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isValidId(proofId) && isSignedIn() &&
+        isAppNotStopped() &&
+        isValidTaskProof(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        proofId == (incoming().taskId + '_' + request.auth.uid) &&
+        exists(/databases/$(database)/documents/tasks/$(incoming().taskId)) &&
+        taskProofMatchesUserVip(
+          incoming().rewardBdt,
+          get(/databases/$(database)/documents/tasks/$(incoming().taskId)).data.rewardBdt,
+          request.auth.uid
+        ) &&
+        (
+          incoming().status == 'PENDING_REVIEW' ||
+          (
+            incoming().status == 'APPROVED' &&
+            get(/databases/$(database)/documents/tasks/$(incoming().taskId)).data.get('instantCredit', false) == true
+          )
+        );
+      allow update: if isValidId(proofId) && isOwnerAdmin() && isValidTaskProof(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(proofId) && isOwnerAdmin();
+    }
+
+    match /transactions/{txnId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isValidId(txnId) && isValidTransaction(incoming()) && (
+        isOwnerAdmin() ||
+        (
+          isSignedIn() &&
+          incoming().userId == request.auth.uid &&
+          (
+            (incoming().type == 'BONUS' && incoming().amountBdt == 10 && incoming().status == 'COMPLETED') ||
+            (incoming().type == 'WITHDRAWAL' && incoming().amountBdt <= -310 && incoming().status == 'PENDING') ||
+            (incoming().type == 'TASK_EARNING' && incoming().amountBdt > 0 && incoming().status == 'PENDING') ||
+            (
+              incoming().type == 'TASK_EARNING' &&
+              incoming().amountBdt > 0 &&
+              incoming().status == 'COMPLETED' &&
+              !exists(/databases/$(database)/documents/task_proofs/$(incoming().referenceId)) &&
+              existsAfter(/databases/$(database)/documents/task_proofs/$(incoming().referenceId)) &&
+              getAfter(/databases/$(database)/documents/task_proofs/$(incoming().referenceId)).data.status == 'APPROVED' &&
+              incoming().amountBdt == getAfter(/databases/$(database)/documents/task_proofs/$(incoming().referenceId)).data.rewardBdt
+            )
+          )
+        ) ||
+        (
+          // Referrer 15 BDT bonus ledger entry created atomically alongside verified /referrals/{uid}
+          isSignedIn() &&
+          incoming().type == 'BONUS' &&
+          incoming().amountBdt == 15 &&
+          incoming().status == 'COMPLETED' &&
+          incoming().referenceId == ('REF_' + request.auth.uid) &&
+          !exists(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)) &&
+          getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.status == 'CREDITED' &&
+          getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.referrerId == incoming().userId
+        )
+      );
+      allow update, delete: if isValidId(txnId) && isOwnerAdmin();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isValidId(withdrawalId) && isSignedIn() &&
+        isAppNotStopped() &&
+        isValidWithdrawal(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'PENDING';
+      allow update: if isValidId(withdrawalId) && isOwnerAdmin() && isValidWithdrawal(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(withdrawalId) && isOwnerAdmin();
+    }
+
+    match /vip_requests/{requestId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isValidId(requestId) && isSignedIn() &&
+        isAppNotStopped() &&
+        isValidVipRequest(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'PENDING';
+      allow update: if isValidId(requestId) && isOwnerAdmin() && isValidVipRequest(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(requestId) && isOwnerAdmin();
+    }
+
+    match /support_tickets/{ticketId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isOwnerAdmin());
+      allow list: if isOwnerAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isValidId(ticketId) && isSignedIn() &&
+        isAppNotStopped() &&
+        isValidSupportTicket(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'OPEN' &&
+        (!exists(/databases/$(database)/documents/app_config/payment_settings) ||
+          get(/databases/$(database)/documents/app_config/payment_settings).data.get('supportEnabled', true) == true);
+      allow update: if isValidId(ticketId) && isOwnerAdmin() && isValidSupportTicket(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(ticketId) && isOwnerAdmin();
+    }
+
+    match /announcements/{announcementId} {
+      allow get, list: if isSignedIn();
+      allow create: if isValidId(announcementId) && isOwnerAdmin() && isValidAnnouncement(incoming());
+      allow update: if isValidId(announcementId) && isOwnerAdmin() && isValidAnnouncement(incoming()) &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(announcementId) && isOwnerAdmin();
+    }
+
+    match /app_config/{docId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(docId) && isOwnerAdmin() && isValidAppConfig(incoming());
+      allow delete: if isValidId(docId) && isOwnerAdmin();
+    }
+  }
+}
