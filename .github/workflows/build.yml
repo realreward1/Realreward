@@ -29,7 +29,7 @@ jobs:
       - name: Setup Gradle Wrapper if missing
         run: |
           if [ ! -f ./gradlew ]; then
-            gradle wrapper --gradle-version 8.7 --distribution-type bin
+            gradle wrapper --gradle-version 9.3.1 --distribution-type bin
           fi
           chmod +x gradlew
 
