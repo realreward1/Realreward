@@ -210,6 +210,7 @@ fun AppNavigation() {
                 key(user.uid) {
                     AuthenticatedShell(
                         firebaseUser = user,
+                        firebaseReady = firebaseReady,
                         language = language,
                         languageStore = languageStore,
                         onSignOut = {
@@ -261,48 +262,30 @@ private fun UnauthenticatedShell(
 @Composable
 private fun AuthenticatedShell(
     firebaseUser: FirebaseUser,
+    firebaseReady: Boolean,
     language: AppLanguage,
     languageStore: LanguagePreferenceStore?,
     onSignOut: () -> Unit
 ) {
     val uid = firebaseUser.uid
     val context = LocalContext.current
+    val appCtx = context.applicationContext
 
-    val mainViewModel: MainViewModel? = remember(uid, languageStore) {
-        if (languageStore == null) {
+    val repository: RealRewardFirestoreRepository? = remember(uid, firebaseReady, appCtx) {
+        if (!firebaseReady) {
             null
         } else {
             try {
-                null
-            } catch (_: Exception) {
+                val db = FirestoreProvider.getDatabase(appCtx)
+                RealRewardFirestoreRepository(db)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize RealRewardFirestoreRepository", e)
                 null
             }
         }
     }
 
-    val resolvedViewModel: MainViewModel? = if (languageStore != null) {
-        val vmResult = runCatching {
-            viewModel<MainViewModel>(
-                key = uid,
-                factory = viewModelFactory {
-                    initializer {
-                        val app = checkNotNull(this[APPLICATION_KEY])
-                        val db = FirestoreProvider.getDatabase(app)
-                        MainViewModel(
-                            repository = RealRewardFirestoreRepository(db),
-                            languageStore = languageStore,
-                            currentUserId = uid
-                        )
-                    }
-                }
-            )
-        }
-        vmResult.getOrNull()
-    } else {
-        mainViewModel
-    }
-
-    if (resolvedViewModel == null) {
+    if (languageStore == null || repository == null) {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -319,6 +302,19 @@ private fun AuthenticatedShell(
         }
         return
     }
+
+    val resolvedViewModel: MainViewModel = viewModel(
+        key = uid,
+        factory = viewModelFactory {
+            initializer {
+                MainViewModel(
+                    repository = repository,
+                    languageStore = languageStore,
+                    currentUserId = uid
+                )
+            }
+        }
+    )
 
     val userAccountState by resolvedViewModel.userAccountState.collectAsStateWithLifecycle()
     val tasksState by resolvedViewModel.tasksState.collectAsStateWithLifecycle()
@@ -921,20 +917,28 @@ private fun AuthenticatedShell(
                                     if (!verified || !isAdminUnlocked) {
                                         LaunchedEffect(Unit) { navController.popBackStack() }
                                     } else {
-                                        val adminViewModelResult = runCatching {
-                                            viewModel<AdminViewModel>(
+                                        val adminRepo: AdminFirestoreRepository? = remember(uid, firebaseReady, appCtx) {
+                                            if (!firebaseReady) {
+                                                null
+                                            } else {
+                                                try {
+                                                    val db = FirestoreProvider.getDatabase(appCtx)
+                                                    AdminFirestoreRepository(db)
+                                                } catch (e: Exception) {
+                                                    Log.e(TAG, "Failed to create AdminFirestoreRepository", e)
+                                                    null
+                                                }
+                                            }
+                                        }
+                                        if (adminRepo != null) {
+                                            val adminViewModel: AdminViewModel = viewModel(
                                                 key = "owner_admin_$uid",
                                                 factory = viewModelFactory {
                                                     initializer {
-                                                        val app = checkNotNull(this[APPLICATION_KEY])
-                                                        val db = FirestoreProvider.getDatabase(app)
-                                                        AdminViewModel(AdminFirestoreRepository(db))
+                                                        AdminViewModel(adminRepo)
                                                     }
                                                 }
                                             )
-                                        }
-                                        val adminViewModel = adminViewModelResult.getOrNull()
-                                        if (adminViewModel != null) {
                                             AdminPanelScreen(
                                                 adminViewModel = adminViewModel,
                                                 language = language,
