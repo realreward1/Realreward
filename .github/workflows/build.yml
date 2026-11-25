@@ -1,6 +1,36 @@
-      - name: Scan for common crash & build issues
+name: Build Realreward Debug APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Scan crash-prone code patterns
         if: always()
+        continue-on-error: true
         run: |
-          echo "=== BUILD & CODE SCAN REPORT ===" > crash-report.txt
-          grep -rnE "!!|ILLEGAL_TRY_CATCH_AROUND_COMPOSABLE|try\s*\{" app/src/main/java || true >> crash-report.txt
-          cat crash-report.txt || true
+          echo "=== CRASH RISK SCAN ==="
+          grep -rn "!!" app/src/main/java || true
+          grep -rn "Firebase.auth" app/src/main/java || true
+          grep -rn "getCredential" app/src/main/java || true
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
